@@ -148,3 +148,31 @@ cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
 #for now we'll use a local script to install the dependencies
 #First we'll start up a simple server and background it
 chroot $tmp/iso_new ./after_chroot_todo.sh
+
+# cleanup
+umount $tmp/iso_org
+rm -rf $tmp/iso_new
+rm -rf $tmp/iso_org
+rm -rf $tmphtml
+
+# print info to user
+echo " -----"
+echo " finished remastering your ubuntu iso file"
+echo " the new file is located at: $tmp/$new_iso_name"
+echo " your username is: $username"
+echo " your password is: $password"
+echo " your hostname is: $hostname"
+echo " your timezone is: $timezone"
+echo
+
+# unset vars
+unset username
+unset password
+unset hostname
+unset timezone
+unset pwhash
+unset download_file
+unset download_location
+unset new_iso_name
+unset tmp
+unset seed_file
