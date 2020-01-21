@@ -1,0 +1,3 @@
+Add mysql server and client dependencies as well as the python integrations to the make_iso.sh script
+Find a way to automatically input the password for the mysql server
+Add the python3 requirements file

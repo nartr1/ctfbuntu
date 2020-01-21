@@ -1,11 +1,35 @@
 #! /bin/bash
 
+mkdir final
+tmp="$(pwd)/final"
 install_dir="$HOME"
 hostname="jorges_ctf"
+# define download function
+# courtesy of http://fitnr.com/showing-file-download-progress-using-wget.html
+download()
+{
+    local url=$1
+    echo -n "    "
+    wget --progress=dot $url 2>&1 | grep --line-buffered "%" | \
+        sed -u -e "s,\.,,g" | awk '{printf("\b\b\b\b%4s", $2)}'
+    echo -ne "\b\b\b\b"
+    echo " DONE"
+}
 
-if [ $currentuser != "root" ]; then
-    echo " you need sudo privileges to run this script, or run it as root"
-    exit 1
+# define function to check if program is installed
+# courtesy of https://gist.github.com/JamieMason/4761049
+function program_is_installed {
+    # set to 1 initially
+    local return_=1
+    # set to 0 if not found
+    type $1 >/dev/null 2>&1 || { local return_=0; }
+    # return value
+    echo $return_
+}
+
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root"
+   exit 1
 fi
 
 tmphtml=$tmp/tmphtml
@@ -38,10 +62,10 @@ if [[ "$password" != "$password2" ]]; then
     echo
     exit
 fi
-
+echo ""
 cd $tmp
 if [[ ! -f $tmp/$download_file ]]; then
-    echo -n " downloading $download_file: "
+    echo -n "downloading $download_file: "
     download "$download_location$download_file"
 fi
 if [[ ! -f $tmp/$download_file ]]; then
@@ -59,6 +83,7 @@ mkdir -p $tmp
 mkdir -p $tmp/iso_org
 mkdir -p $tmp/iso_new
 
+#Check for mounting errors
 if grep -qs $tmp/iso_org /proc/mounts ; then
     echo " image is already mounted, continue"
 else
@@ -66,11 +91,12 @@ else
 fi
 (cp -rT $tmp/iso_org $tmp/iso_new > /dev/null 2>&1)
 
-
+#Decompress the filesystem to allow for modification
 sudo rsync --exclude=/casper/filesystem.squashfs -a $tmp/iso_org $tmp/iso_new
 unsquashfs mnt/casper/filesystem.squashfs
 mv squashfs-root $tmp/iso_new
 
+#Mounting of the psuedo directories to have full internet access
 cp /etc/resolv.conf $tmp/iso_new/etc
 mount --bind /dev/ $tmp/iso_new/dev
 mount -t proc none $tmp/iso_new/proc
@@ -116,8 +142,6 @@ sed -i "/label install/ilabel autoinstall\n\
   append file=/cdrom/preseed/ubuntu-server.seed initrd=/install/initrd.gz auto=true priority=high preseed/file=/cdrom/preseed/netson.seed preseed/file/checksum=$seed_checksum --" $tmp/iso_new/isolinux/txt.cfg
 
 cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
-
-#The above comes mostly from https://github.com/netson/ubuntu-unattended/
 
 #After the initial configuration of hostnames and such, we then move onto the installation of dependencies
 
