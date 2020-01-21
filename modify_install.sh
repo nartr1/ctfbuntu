@@ -65,6 +65,39 @@ else
     (mount -o loop $tmp/$download_file $tmp/iso_org > /dev/null 2>&1)
 fi
 (cp -rT $tmp/iso_org $tmp/iso_new > /dev/null 2>&1)
+
+
+sudo rsync --exclude=/casper/filesystem.squashfs -a $tmp/iso_org $tmp/iso_new
+unsquashfs mnt/casper/filesystem.squashfs
+mv squashfs-root $tmp/iso_new
+
+cp /etc/resolv.conf $tmp/iso_new/etc
+mount --bind /dev/ $tmp/iso_new/dev
+mount -t proc none $tmp/iso_new/proc
+mount -t sysfs none $tmp/iso_new/sys
+mount -t devpts none $tmp/iso_new/dev/pts
+
+#Create a script to be run within the chroot to properly install dependencies
+cat <<EOT >> $tmp/iso_new/after_chroot_todo.sh
+export HOME=/root
+export LC_ALL=C
+dbus-uuidgen > /var/lib/dbus/machine-id
+dpkg-divert --local --rename --add /sbin/initctl
+ln -s /bin/true /sbin/initctl
+export PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin
+apt update -y && apt upgrade -y && apt dist-upgrade -y
+apt install software-properties-common build-essential git
+apt update
+apt install python3-pip python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev
+
+#Full Cleanup in CHROOT
+apt-get autoremove && apt-get autoclean
+rm -rf /tmp/* ~/.bash_history
+rm /var/lib/dbus/machine-id
+rm /sbin/initctl
+dpkg-divert --rename --remove /sbin/initctl
+EOT
+
 cd $tmp/iso_new
 echo en > $tmp/iso_new/isolinux/lang
 pwhash=$(echo $password | mkpasswd -s -m sha-512)
@@ -90,15 +123,4 @@ cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
 
 #for now we'll use a local script to install the dependencies
 #First we'll start up a simple server and background it
-python3 -m http.server 8090 --bind localhost
-chroot $tmp/iso_new 
-
-
-
-
-#Full Cleanup in CHROOT
-#apt-get autoremove && apt-get autoclean
-#rm -rf /tmp/* ~/.bash_history
-#rm /var/lib/dbus/machine-id
-#rm /sbin/initctl
-#dpkg-divert --rename --remove /sbin/initctl
+chroot $tmp/iso_new ./after_chroot_todo.sh
