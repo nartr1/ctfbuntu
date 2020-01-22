@@ -38,10 +38,10 @@ wget -O $tmphtml 'http://releases.ubuntu.com/' >/dev/null 2>&1
 bion=$(fgrep Bionic $tmphtml | head -1 | awk '{print $3}' | sed 's/href=\"//; s/\/\"//')
 bion_vers=$(fgrep Bionic $tmphtml | head -1 | awk '{print $6}')
 
-download_file="ubuntu-$bion_vers-server-amd64.iso"
-download_location="http://cdimage.ubuntu.com/releases/$bion/release/"
-new_iso_name="ubuntu-$bion_vers-server-amd64-unattended.iso"
-
+download_file="ubuntu-$bion_vers-desktop-amd64.iso"
+download_location="http://releases.ubuntu.com/18.04.3/"
+new_iso_name="ubuntu-$bion_vers-desktop-amd64-unattended.iso"
+#http://releases.ubuntu.com/18.04.3/ubuntu-18.04.3-desktop-amd64.iso
 if [ -f /etc/timezone ]; then
   timezone=`cat /etc/timezone`
 elif [ -h /etc/localtime ]; then
@@ -79,32 +79,26 @@ fi
 seed_file="jorge.seed"
 
 echo " remastering your iso file"
-mkdir -p $tmp
-mkdir -p $tmp/iso_org
-mkdir -p $tmp/iso_new
+mkdir $tmp/iso_org
+mkdir $tmp/iso_new
 
-#Check for mounting errors
-if grep -qs $tmp/iso_org /proc/mounts ; then
-    echo " image is already mounted, continue"
-else
-    (mount -o loop $tmp/$download_file $tmp/iso_org > /dev/null 2>&1)
-fi
+mount -o loop $tmp/$download_file $tmp/iso_org > /dev/null 2>&1
 (cp -rT $tmp/iso_org $tmp/iso_new > /dev/null 2>&1)
 
 #Decompress the filesystem to allow for modification
 sudo rsync --exclude=/casper/filesystem.squashfs -a $tmp/iso_org $tmp/iso_new
-unsquashfs mnt/casper/filesystem.squashfs
+unsquashfs $tmp/iso_new/casper/filesystem.squashfs #fix this
 mv squashfs-root $tmp/iso_new
 
 #Mounting of the psuedo directories to have full internet access
-cp /etc/resolv.conf $tmp/iso_new/etc
-mount --bind /dev/ $tmp/iso_new/dev
-mount -t proc none $tmp/iso_new/proc
-mount -t sysfs none $tmp/iso_new/sys
-mount -t devpts none $tmp/iso_new/dev/pts
+cp /etc/resolv.conf $tmp/iso_new/squashfs-root/etc
+mount --bind /dev/ $tmp/iso_new/squashfs-root/dev
+mount -t proc none $tmp/iso_new/squashfs-root/proc
+mount -t sysfs none $tmp/iso_new/squashfs-root/sys
+mount -t devpts none $tmp/iso_new/squashfs-root/dev/pts
 
 #Create a script to be run within the chroot to properly install dependencies
-cat <<EOT >> $tmp/iso_new/after_chroot_todo.sh
+cat <<EOT >> $tmp/iso_new/squashfs-root/after_chroot_todo.sh
 export HOME=/root
 export LC_ALL=C
 dbus-uuidgen > /var/lib/dbus/machine-id
@@ -126,8 +120,8 @@ EOT
 
 cd $tmp/iso_new
 echo en > $tmp/iso_new/isolinux/lang
-pwhash=$(echo $password | mkpasswd -s -m sha-512)
-
+pwhash=$(echo $password | mkpasswd -m sha-512)
+cp $seed_file $tmp/iso_new/preseed
 sed -i "s@{{username}}@$username@g" $tmp/iso_new/preseed/$seed_file
 sed -i "s@{{pwhash}}@$pwhash@g" $tmp/iso_new/preseed/$seed_file
 sed -i "s@{{hostname}}@$hostname@g" $tmp/iso_new/preseed/$seed_file
@@ -147,13 +141,13 @@ cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
 
 #for now we'll use a local script to install the dependencies
 #First we'll start up a simple server and background it
-chroot $tmp/iso_new ./after_chroot_todo.sh
+chroot $tmp/iso_new $tmp/iso_new/squashfs-root/after_chroot_todo.sh
 
 # cleanup
 umount $tmp/iso_org
-rm -rf $tmp/iso_new
-rm -rf $tmp/iso_org
-rm -rf $tmphtml
+#rm -rf $tmp/iso_new
+#rm -rf $tmp/iso_org
+#rm -rf $tmphtml
 
 # print info to user
 echo " -----"
