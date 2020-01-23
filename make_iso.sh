@@ -1,9 +1,13 @@
 #! /bin/bash
 
 mkdir final
+working_dir="$(pwd)"
 tmp="$(pwd)/final"
-install_dir="$HOME"
+seed_file="jorge.seed"
 hostname="jorges_ctf"
+
+cp $seed_file final
+
 # define download function
 # courtesy of http://fitnr.com/showing-file-download-progress-using-wget.html
 download()
@@ -26,6 +30,17 @@ function program_is_installed {
     # return value
     echo $return_
 }
+function replace_string {
+PYTHON_FILE_REPLACE="$1"
+PYTHON_SEARCH_REPLACE="$2"
+PYTHON_STRING_REPLACE="$3"
+python3 - <<END
+with open('$PYTHON_FILE_REPLACE') as f:
+  newText=f.read().replace('$PYTHON_SEARCH_REPLACE', '$PYTHON_STRING_REPLACE')
+  with open('$PYTHON_FILE_REPLACE', "w") as f:
+    f.write(newText)
+END
+}
 
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root"
@@ -34,6 +49,8 @@ fi
 
 tmphtml=$tmp/tmphtml
 rm $tmphtml >/dev/null 2>&1
+
+#use static links
 wget -O $tmphtml 'http://releases.ubuntu.com/' >/dev/null 2>&1
 bion=$(fgrep Bionic $tmphtml | head -1 | awk '{print $3}' | sed 's/href=\"//; s/\/\"//')
 bion_vers=$(fgrep Bionic $tmphtml | head -1 | awk '{print $6}')
@@ -76,7 +93,6 @@ if [[ ! -f $tmp/$download_file ]]; then
   echo "Then run this script again."
   exit 1
 fi
-seed_file="jorge.seed"
 
 echo " remastering your iso file"
 mkdir $tmp/iso_org
@@ -106,9 +122,9 @@ dpkg-divert --local --rename --add /sbin/initctl
 ln -s /bin/true /sbin/initctl
 export PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin
 apt update -y && apt upgrade -y && apt dist-upgrade -y
-apt install software-properties-common build-essential git
-apt update
-apt install python3-pip python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev
+apt install software-properties-common build-essential git -y
+apt update -y
+apt install python3-pip python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
 
 #Full Cleanup in CHROOT
 apt-get autoremove && apt-get autoclean
@@ -118,14 +134,36 @@ rm /sbin/initctl
 dpkg-divert --rename --remove /sbin/initctl
 EOT
 
-cd $tmp/iso_new
+chmod +x $tmp/iso_new/squashfs-root/after_chroot_todo.sh
+
+cd $tmp/iso_new/squashfs-root
 echo en > $tmp/iso_new/isolinux/lang
-pwhash=$(echo $password | mkpasswd -m sha-512)
-cp $seed_file $tmp/iso_new/preseed
-sed -i "s@{{username}}@$username@g" $tmp/iso_new/preseed/$seed_file
-sed -i "s@{{pwhash}}@$pwhash@g" $tmp/iso_new/preseed/$seed_file
-sed -i "s@{{hostname}}@$hostname@g" $tmp/iso_new/preseed/$seed_file
-sed -i "s@{{timezone}}@$timezone@g" $tmp/iso_new/preseed/$seed_file
+#fix the password hash maker
+#pwhash=$(echo $password | mkpasswd -m sha-512)
+cp $tmp/$seed_file $tmp/iso_new/preseed/
+chmod 666 $tmp/iso_new/preseed/$seed_file
+#sed -i "s/{{username}}/$username/g" $tmp/iso_new/preseed/$seed_file
+#sed -i "s/{{pwhash}}/$pwhash/g" $tmp/iso_new/preseed/$seed_file
+#sed -i "s/{{hostname}}/$hostname/g" $tmp/iso_new/preseed/$seed_file
+#sed -i "s/{{timezone}}/$timezone/g" $tmp/iso_new/preseed/$seed_file
+echo "Replacing terms in the seed file"
+
+echo "Replacing {{username}} with $username in $tmp/iso_new/preseed/$seed_file"
+replace_string $tmp/iso_new/preseed/$seed_file {{username}} $username
+#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{username}} $username"
+#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{username}} $username
+#echo "Replacing {{pwhash}} with $pwhash in $tmp/iso_new/preseed/$seed_file"
+#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{pwhash}} $pwhash"
+#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{pwhash}} $pwhash
+echo "Replacing {{hostname}} with $hostname in $tmp/iso_new/preseed/$seed_file"
+replace_string $tmp/iso_new/preseed/$seed_file {{hostname}} $hostname
+#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{hostname}} $hostname"
+#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{hostname}} $hostname
+echo "Replacing {{timezone}} with $timezone in $tmp/iso_new/preseed/$seed_file"
+replace_string $tmp/iso_new/preseed/$seed_file {{timezone}} $timezone
+#python3 /home/minion/CTF/Testing/file_testing/replace_words.py /home/minion/CTF/Testing/file_testing/final/iso_new/preseed/jorge.seed {{timezone}} America/Edmonto
+#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{timezone}} $timezone"
+#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{timezone}} $timezone
 
 seed_checksum=$(md5sum $tmp/iso_new/preseed/$seed_file)
 
@@ -135,13 +173,13 @@ sed -i "/label install/ilabel autoinstall\n\
   kernel /install/vmlinuz\n\
   append file=/cdrom/preseed/ubuntu-server.seed initrd=/install/initrd.gz auto=true priority=high preseed/file=/cdrom/preseed/netson.seed preseed/file/checksum=$seed_checksum --" $tmp/iso_new/isolinux/txt.cfg
 
-cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
+#cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
 
 #After the initial configuration of hostnames and such, we then move onto the installation of dependencies
 
 #for now we'll use a local script to install the dependencies
 #First we'll start up a simple server and background it
-chroot $tmp/iso_new $tmp/iso_new/squashfs-root/after_chroot_todo.sh
+chroot . "./after_chroot_todo.sh"
 
 # cleanup
 umount $tmp/iso_org
@@ -157,7 +195,7 @@ echo " your username is: $username"
 echo " your password is: $password"
 echo " your hostname is: $hostname"
 echo " your timezone is: $timezone"
-echo
+echo ""
 
 # unset vars
 unset username
