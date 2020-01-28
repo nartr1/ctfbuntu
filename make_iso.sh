@@ -1,11 +1,19 @@
 #! /bin/bash
 
+#This is where most of the work will be done, will contain the final .iso
 mkdir final
+
+#These just make it easier to keep track of where the hell this script is running from
 working_dir="$(pwd)"
 tmp="$(pwd)/final"
+
+#Nothing special about this seed, pretty much a copy of the netson.seed for the script this one is based on
 seed_file="jorge.seed"
+
+#Honestly, this can be whatever you want it to be
 hostname="jorges_ctf"
 
+#For later use
 cp $seed_file final
 
 # define download function
@@ -20,16 +28,7 @@ download()
     echo " DONE"
 }
 
-# define function to check if program is installed
-# courtesy of https://gist.github.com/JamieMason/4761049
-function program_is_installed {
-    # set to 1 initially
-    local return_=1
-    # set to 0 if not found
-    type $1 >/dev/null 2>&1 || { local return_=0; }
-    # return value
-    echo $return_
-}
+#Didn't feel like working with sed, this made for a nice workaround
 function replace_string {
 PYTHON_FILE_REPLACE="$1"
 PYTHON_SEARCH_REPLACE="$2"
@@ -42,23 +41,40 @@ with open('$PYTHON_FILE_REPLACE') as f:
 END
 }
 
+#An adapted bash/python3 integrated funtion adapted from here: https://serverfault.com/questions/330069/how-to-create-an-sha-512-hashed-password-for-shadow
+function make_password {
+PYTHON_PASSWORD="$1"
+python3 - <<END
+import crypt
+print(crypt.crypt('$PYTHON_PASSWORD', crypt.mksalt(crypt.METHOD_SHA512)))
+END
+}
+
+#Normal check, we need root to access mounting commands, as well as chroot further into the install
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root"
    exit 1
 fi
 
+#Temporary storage of the ubuntu release page, most likely overkill for this. Originally used for a multiple choice unattended install script
 tmphtml=$tmp/tmphtml
 rm $tmphtml >/dev/null 2>&1
 
-#use static links
+#Must be Ubuntu 18.04.3 as the server version is missing the casper directory which contains the filesystem to be modified
 wget -O $tmphtml 'http://releases.ubuntu.com/' >/dev/null 2>&1
 bion=$(fgrep Bionic $tmphtml | head -1 | awk '{print $3}' | sed 's/href=\"//; s/\/\"//')
 bion_vers=$(fgrep Bionic $tmphtml | head -1 | awk '{print $6}')
 
 download_file="ubuntu-$bion_vers-desktop-amd64.iso"
 download_location="http://releases.ubuntu.com/18.04.3/"
+
+#Might be changing this to something cooler, and not exactly the same as the fucking input file
 new_iso_name="ubuntu-$bion_vers-desktop-amd64-unattended.iso"
+
+#Keep this link around in case you need to hard code it in
 #http://releases.ubuntu.com/18.04.3/ubuntu-18.04.3-desktop-amd64.iso
+
+#Automatically pull the timezone from the local machine the script is being run on
 if [ -f /etc/timezone ]; then
   timezone=`cat /etc/timezone`
 elif [ -h /etc/localtime ]; then
@@ -68,19 +84,25 @@ else
   timezone=`find /usr/share/zoneinfo/ -type f -exec md5sum {} \; | grep "^$checksum" | sed "s/.*\/usr\/share\/zoneinfo\///" | head -n 1`
 fi
 
+#Let the user feel somewhat part of the process
 read -ep " please enter your preferred timezone: " -i "${timezone}" timezone
 read -ep " please enter your preferred username: " -i "jorge" username
 read -sp " please enter your preferred password: " password
 printf "\n"
 read -sp " confirm your preferred password: " password2
 
+#Pretty standard check, make sure the password confirmation matches
 if [[ "$password" != "$password2" ]]; then
     echo " your passwords do not match; please restart the script and try again"
-    echo
+    echo ""
     exit
 fi
 echo ""
+
+#Now begins the actual work with the iso
 cd $tmp
+
+#Check if the iso has already been download, HOWEVER this does not check the integrity of the ubuntu 18.04 iso.
 if [[ ! -f $tmp/$download_file ]]; then
     echo -n "downloading $download_file: "
     download "$download_location$download_file"
@@ -93,20 +115,23 @@ if [[ ! -f $tmp/$download_file ]]; then
   echo "Then run this script again."
   exit 1
 fi
-
 echo " remastering your iso file"
-mkdir $tmp/iso_org
+mkdir $tmp/iso_org #iso_org is the mount point for the downloaded iso, we cannot work with it until it is copied into a new directory, hence the iso_new dir.
 mkdir $tmp/iso_new
 
+#Mount and copy the contents of the iso so we can modify it
+echo "Mounting the downloaded iso and copying the relavent files"
 mount -o loop $tmp/$download_file $tmp/iso_org > /dev/null 2>&1
 (cp -rT $tmp/iso_org $tmp/iso_new > /dev/null 2>&1)
 
 #Decompress the filesystem to allow for modification
+echo "Decompressing the filesystem"
 sudo rsync --exclude=/casper/filesystem.squashfs -a $tmp/iso_org $tmp/iso_new
 unsquashfs $tmp/iso_new/casper/filesystem.squashfs #fix this
 mv squashfs-root $tmp/iso_new
 
-#Mounting of the psuedo directories to have full internet access
+#Mounting of the psuedo directories to have full internet access because we will be working with the apt repo's, updating and installing dependencies
+echo "Mounting the pseudo directories to allow for a more full out chroot for installs"
 cp /etc/resolv.conf $tmp/iso_new/squashfs-root/etc
 mount --bind /dev/ $tmp/iso_new/squashfs-root/dev
 mount -t proc none $tmp/iso_new/squashfs-root/proc
@@ -114,6 +139,14 @@ mount -t sysfs none $tmp/iso_new/squashfs-root/sys
 mount -t devpts none $tmp/iso_new/squashfs-root/dev/pts
 
 #Create a script to be run within the chroot to properly install dependencies
+
+#Currently Missing Dependencies:
+#Mysql server/client (Needs a password when installing, needs testing for scripted install)
+#Mysql python3 hooks/libraries
+#Logging system? (This will come later)
+#Qemu+Virtualbox for the automatic instancing of prebuilt virtual machines (Also coming later)
+
+echo "Building the dependency installer"
 cat <<EOT >> $tmp/iso_new/squashfs-root/after_chroot_todo.sh
 export HOME=/root
 export LC_ALL=C
@@ -125,6 +158,14 @@ apt update -y && apt upgrade -y && apt dist-upgrade -y
 apt install software-properties-common build-essential git -y
 apt update -y
 apt install python3-pip python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
+echo "ctf" | apt install mysql-server libmysqlclient-dev -y
+sudo mysql -u -p -e "create user 'rtb'@'localhost' identified by 'rtb'; create database rootthebox character set utf8mb4; grant all on rootthebox.* to 'rtb'@'localhost';"
+echo "" > ~/.mysql_history
+git clone https://github.com/moloch--/RootTheBox.git
+cd RootTheBox
+pip3 install py-postgresql tornado==5.*; python_version < '3.0' tornado; python_version >= '3.0' pbkdf2 PyMySQL python-memcached python-dateutil defusedxml netaddr nose future python-resize-image sqlalchemy alembic enum34 mysqlclient rocketchat_API --upgrade
+#check this
+./rootthebox --setup=prod
 
 #Full Cleanup in CHROOT
 apt-get autoremove && apt-get autoclean
@@ -132,60 +173,61 @@ rm -rf /tmp/* ~/.bash_history
 rm /var/lib/dbus/machine-id
 rm /sbin/initctl
 dpkg-divert --rename --remove /sbin/initctl
+exit
 EOT
 
+#Allow for execution of the chroot dependency script
 chmod +x $tmp/iso_new/squashfs-root/after_chroot_todo.sh
 
+#Enter the newly decompressed file system
 cd $tmp/iso_new/squashfs-root
+
+#Set up language to be English/US
+echo "Setting up your language settings"
 echo en > $tmp/iso_new/isolinux/lang
-#fix the password hash maker
-#pwhash=$(echo $password | mkpasswd -m sha-512)
+
+#Set up the pasword hash for /etc/shadow by using the preseed file's option for a password hash
+ehco "Making you a shiny new password hash"
+pwhash=make_password $password
+
+#Copy our base seed file into where the other seed files reside
 cp $tmp/$seed_file $tmp/iso_new/preseed/
-chmod 666 $tmp/iso_new/preseed/$seed_file
-#sed -i "s/{{username}}/$username/g" $tmp/iso_new/preseed/$seed_file
-#sed -i "s/{{pwhash}}/$pwhash/g" $tmp/iso_new/preseed/$seed_file
-#sed -i "s/{{hostname}}/$hostname/g" $tmp/iso_new/preseed/$seed_file
-#sed -i "s/{{timezone}}/$timezone/g" $tmp/iso_new/preseed/$seed_file
+
+#Lol nice
+#chmod 666 $tmp/iso_new/preseed/$seed_file
+
 echo "Replacing terms in the seed file"
-
-echo "Replacing {{username}} with $username in $tmp/iso_new/preseed/$seed_file"
 replace_string $tmp/iso_new/preseed/$seed_file {{username}} $username
-#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{username}} $username"
-#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{username}} $username
-#echo "Replacing {{pwhash}} with $pwhash in $tmp/iso_new/preseed/$seed_file"
-#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{pwhash}} $pwhash"
-#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{pwhash}} $pwhash
-echo "Replacing {{hostname}} with $hostname in $tmp/iso_new/preseed/$seed_file"
+replace_string $tmp/iso_new/preseed/$seed_file {{pwhash}} $pwhash
 replace_string $tmp/iso_new/preseed/$seed_file {{hostname}} $hostname
-#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{hostname}} $hostname"
-#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{hostname}} $hostname
-echo "Replacing {{timezone}} with $timezone in $tmp/iso_new/preseed/$seed_file"
 replace_string $tmp/iso_new/preseed/$seed_file {{timezone}} $timezone
-#python3 /home/minion/CTF/Testing/file_testing/replace_words.py /home/minion/CTF/Testing/file_testing/final/iso_new/preseed/jorge.seed {{timezone}} America/Edmonto
-#echo "python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{timezone}} $timezone"
-#sudo /usr/bin/python3 $working_dir/replace_words.py $tmp/iso_new/preseed/$seed_file {{timezone}} $timezone
 
+echo "Remastering the checksums of files"
 seed_checksum=$(md5sum $tmp/iso_new/preseed/$seed_file)
 
 #Add autoinstall option to menu
+echo "Adding autoinstall option to installation menu"
 sed -i "/label install/ilabel autoinstall\n\
   menu label ^Autoinstall Jorge's CTF Ubuntu Server\n\
   kernel /install/vmlinuz\n\
   append file=/cdrom/preseed/ubuntu-server.seed initrd=/install/initrd.gz auto=true priority=high preseed/file=/cdrom/preseed/netson.seed preseed/file/checksum=$seed_checksum --" $tmp/iso_new/isolinux/txt.cfg
 
+#This fucked me for a while. DONT OVERWRITE YOUR WORK
 #cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
 
 #After the initial configuration of hostnames and such, we then move onto the installation of dependencies
 
 #for now we'll use a local script to install the dependencies
 #First we'll start up a simple server and background it
+echo "Installing dependencies"
 chroot . "./after_chroot_todo.sh"
 
 # cleanup
+echo "Cleaning up"
 umount $tmp/iso_org
-#rm -rf $tmp/iso_new
-#rm -rf $tmp/iso_org
-#rm -rf $tmphtml
+rm -rf $tmp/iso_new
+rm -rf $tmp/iso_org
+rm -rf $tmphtml
 
 # print info to user
 echo " -----"
