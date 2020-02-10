@@ -9,7 +9,7 @@ tmp="$(pwd)/final"
 
 #Nothing special about this seed, pretty much a copy of the netson.seed for the script this one is based on
 seed_file="jorge.seed"
-IMAGE_NAME="jorgebuntu"
+IMAGE_NAME="jorgebuntu1"
 #Honestly, this can be whatever you want it to be
 hostname="jorges_ctf"
 
@@ -138,11 +138,7 @@ mount -t proc none $tmp/iso_new/squashfs-root/proc
 mount -t sysfs none $tmp/iso_new/squashfs-root/sys
 mount -t devpts none $tmp/iso_new/squashfs-root/dev/pts
 
-#Create a script to be run within the chroot to properly install dependencies
-
 #Currently Missing Dependencies:
-#Mysql server/client (Needs a password when installing, needs testing for scripted install)
-#Mysql python3 hooks/libraries
 #Logging system? (This will come later)
 #Qemu+Virtualbox for the automatic instancing of prebuilt virtual machines (Also coming later)
 
@@ -164,14 +160,15 @@ apt update -y && apt upgrade -y && apt dist-upgrade -y
 apt remove -y thunderbird libreoffice
 apt install software-properties-common build-essential git -y
 apt update -y
-apt install python3-pip  python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
+apt install python-pip  python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
 echo "ctf" | apt install mysql-server libmysqlclient-dev -y
-sudo systemctl start mysqld
+sudo service mysql enable
+sudo service mysql start
 sudo mysql -u root -p=rtb -e "create user 'rtb'@'localhost' identified by 'rtb'; create database rootthebox character set utf8mb4; grant all on rootthebox.* to 'rtb'@'localhost';"
 echo "" > ~/.mysql_history
 cd /root
 git clone https://github.com/moloch--/RootTheBox.git /root/RootTheBox
-python -m pip install py-postgresql tornado==5.* pbkdf2 PyMySQL python-memcached python-dateutil defusedxml netaddr nose future python-resize-image sqlalchemy alembic enum34 mysqlclient rocketchat_API --upgrade
+pip3 install nose py-postgresql tornado==5.* pbkdf2 PyMySQL python-memcached python-dateutil defusedxml netaddr nose future python-resize-image sqlalchemy alembic enum34 mysqlclient rocketchat_API --upgrade
 #check this
 /root/RootTheBox/rootthebox.py --setup=prod
 
@@ -203,10 +200,93 @@ echo "Making you a shiny new password hash"
 pwhash=$(make_password $password)
 
 #Copy our base seed file into where the other seed files reside
-cp $tmp/$seed_file $tmp/iso_new/preseed/
+#OLD cp $tmp/$seed_file $tmp/iso_new/preseed/
+cat << EOT >> $tmp/iso_new/preseed/$seed_file
+# regional setting
+d-i debian-installer/language                               string      en_US:en
+d-i debian-installer/country                                string      US
+d-i debian-installer/locale                                 string      en_US
+d-i debian-installer/splash                                 boolean     false
+d-i localechooser/supported-locales                         multiselect en_US.UTF-8
+d-i pkgsel/install-language-support                         boolean     true
 
-#Lol nice
-#chmod 666 $tmp/iso_new/preseed/$seed_file
+# keyboard selection
+d-i console-setup/ask_detect                                boolean     false
+d-i keyboard-configuration/modelcode                        string      pc105
+d-i keyboard-configuration/layoutcode                       string      us
+d-i keyboard-configuration/variantcode                      string      intl
+d-i keyboard-configuration/xkb-keymap                       select      us(intl)
+d-i debconf/language                                        string      en_US:en
+
+# network settings
+d-i netcfg/choose_interface                                 select      auto
+d-i netcfg/dhcp_timeout                                     string      5
+d-i netcfg/get_hostname                                     string      {{hostname}}
+d-i netcfg/get_domain                                       string      {{hostname}}
+
+# mirror settings
+d-i mirror/country                                          string      manual
+d-i mirror/http/hostname                                    string      archive.ubuntu.com
+d-i mirror/http/directory                                   string      /ubuntu
+d-i mirror/http/proxy                                       string
+
+# clock and timezone settings
+d-i time/zone                                               string      {{timezone}}
+d-i clock-setup/utc                                         boolean     false
+d-i clock-setup/ntp                                         boolean     true
+
+# user account setup
+d-i passwd/root-login                                       boolean     false
+d-i passwd/make-user                                        boolean     true
+d-i passwd/user-fullname                                    string      {{username}}
+d-i passwd/username                                         string      {{username}}
+d-i passwd/user-password-crypted                            password    {{pwhash}}
+d-i passwd/user-uid                                         string
+d-i user-setup/allow-password-weak                          boolean     false
+d-i passwd/user-default-groups                              string      adm cdrom dialout lpadmin plugdev sambashare
+d-i user-setup/encrypt-home                                 boolean     false
+
+# configure apt
+d-i apt-setup/restricted                                    boolean     true
+d-i apt-setup/universe                                      boolean     true
+d-i apt-setup/backports                                     boolean     true
+d-i apt-setup/services-select                               multiselect security
+d-i apt-setup/security_host                                 string      security.ubuntu.com
+d-i apt-setup/security_path                                 string      /ubuntu
+tasksel tasksel/first                                       multiselect Basic Ubuntu server
+d-i pkgsel/upgrade                                          select      safe-upgrade
+d-i pkgsel/update-policy                                    select      none
+d-i pkgsel/updatedb                                         boolean     true
+
+# disk partitioning
+d-i partman/confirm_write_new_label                         boolean     true
+d-i partman/choose_partition                                select      finish
+d-i partman/confirm_nooverwrite                             boolean     true
+d-i partman/confirm                                         boolean     true
+d-i partman-auto/purge_lvm_from_device                      boolean     true
+d-i partman-lvm/device_remove_lvm                           boolean     true
+d-i partman-lvm/confirm                                     boolean     true
+d-i partman-lvm/confirm_nooverwrite                         boolean     true
+d-i partman-auto-lvm/no_boot                                boolean     true
+d-i partman-md/device_remove_md                             boolean     true
+d-i partman-md/confirm                                      boolean     true
+d-i partman-md/confirm_nooverwrite                          boolean     true
+d-i partman-auto/method                                     string      lvm
+d-i partman-auto-lvm/guided_size                            string      max
+d-i partman-partitioning/confirm_write_new_label            boolean     true
+
+# grub boot loader
+d-i grub-installer/only_debian                              boolean     true
+d-i grub-installer/with_other_os                            boolean     true
+
+# finish installation
+d-i finish-install/reboot_in_progress                       note
+d-i finish-install/keep-consoles                            boolean     false
+d-i cdrom-detect/eject                                      boolean     true
+d-i debian-installer/exit/halt                              boolean     false
+d-i debian-installer/exit/poweroff                          boolean     false
+EOT
+
 
 echo "Replacing terms in the seed file"
 replace_string $tmp/iso_new/preseed/$seed_file {{username}} $username
