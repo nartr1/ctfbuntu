@@ -9,7 +9,7 @@ tmp="$(pwd)/final"
 
 #Nothing special about this seed, pretty much a copy of the netson.seed for the script this one is based on
 seed_file="jorge.seed"
-
+IMAGE_NAME="jorgebuntu"
 #Honestly, this can be whatever you want it to be
 hostname="jorges_ctf"
 
@@ -69,7 +69,7 @@ download_file="ubuntu-$bion_vers-desktop-amd64.iso"
 download_location="http://releases.ubuntu.com/18.04.3/"
 
 #Might be changing this to something cooler, and not exactly the same as the fucking input file
-new_iso_name="ubuntu-$bion_vers-desktop-amd64-unattended.iso"
+new_iso_name="ctf-ubuntu-$bion_vers-amd64-unattended.iso"
 
 #Keep this link around in case you need to hard code it in
 #http://releases.ubuntu.com/18.04.3/ubuntu-18.04.3-desktop-amd64.iso
@@ -147,6 +147,12 @@ mount -t devpts none $tmp/iso_new/squashfs-root/dev/pts
 #Qemu+Virtualbox for the automatic instancing of prebuilt virtual machines (Also coming later)
 
 echo "Building the dependency installer"
+cat <<EOT > $tmp/iso_new/squashfs-root/etc/apt/sources.list
+deb http://archive.ubuntu.com/ubuntu/ bionic main universe
+deb http://security.ubuntu.com/ubuntu/ bionic-security main universe
+deb http://archive.ubuntu.com/ubuntu/ bionic-updates main universe
+EOT
+
 cat <<EOT >> $tmp/iso_new/squashfs-root/after_chroot_todo.sh
 export HOME=/root
 export LC_ALL=C
@@ -155,24 +161,30 @@ dpkg-divert --local --rename --add /sbin/initctl
 ln -s /bin/true /sbin/initctl
 export PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin
 apt update -y && apt upgrade -y && apt dist-upgrade -y
+apt remove -y thunderbird libreoffice
 apt install software-properties-common build-essential git -y
 apt update -y
-apt install python3-pip python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
+apt install python3-pip  python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
 echo "ctf" | apt install mysql-server libmysqlclient-dev -y
-sudo mysql -u -p -e "create user 'rtb'@'localhost' identified by 'rtb'; create database rootthebox character set utf8mb4; grant all on rootthebox.* to 'rtb'@'localhost';"
+sudo systemctl start mysqld
+sudo mysql -u root -p=rtb -e "create user 'rtb'@'localhost' identified by 'rtb'; create database rootthebox character set utf8mb4; grant all on rootthebox.* to 'rtb'@'localhost';"
 echo "" > ~/.mysql_history
-git clone https://github.com/moloch--/RootTheBox.git
-cd RootTheBox
-pip3 install py-postgresql tornado==5.*; python_version < '3.0' tornado; python_version >= '3.0' pbkdf2 PyMySQL python-memcached python-dateutil defusedxml netaddr nose future python-resize-image sqlalchemy alembic enum34 mysqlclient rocketchat_API --upgrade
+cd /root
+git clone https://github.com/moloch--/RootTheBox.git /root/RootTheBox
+python -m pip install py-postgresql tornado==5.* pbkdf2 PyMySQL python-memcached python-dateutil defusedxml netaddr nose future python-resize-image sqlalchemy alembic enum34 mysqlclient rocketchat_API --upgrade
 #check this
-./rootthebox --setup=prod
+/root/RootTheBox/rootthebox.py --setup=prod
 
 #Full Cleanup in CHROOT
-apt-get autoremove && apt-get autoclean
+apt-get autoremove -y && apt-get autoclean -y
 rm -rf /tmp/* ~/.bash_history
 rm /var/lib/dbus/machine-id
 rm /sbin/initctl
 dpkg-divert --rename --remove /sbin/initctl
+umount /proc || umount -lf /proc
+umount /sys || umount -lf /sys
+umount /dev/pts || umount -lf /dev/pts
+umount /dev || umount -lf /dev
 exit
 EOT
 
@@ -187,8 +199,8 @@ echo "Setting up your language settings"
 echo en > $tmp/iso_new/isolinux/lang
 
 #Set up the pasword hash for /etc/shadow by using the preseed file's option for a password hash
-ehco "Making you a shiny new password hash"
-pwhash=make_password $password
+echo "Making you a shiny new password hash"
+pwhash=$(make_password $password)
 
 #Copy our base seed file into where the other seed files reside
 cp $tmp/$seed_file $tmp/iso_new/preseed/
@@ -206,6 +218,7 @@ echo "Remastering the checksums of files"
 seed_checksum=$(md5sum $tmp/iso_new/preseed/$seed_file)
 
 #Add autoinstall option to menu
+#Fix this
 echo "Adding autoinstall option to installation menu"
 sed -i "/label install/ilabel autoinstall\n\
   menu label ^Autoinstall Jorge's CTF Ubuntu Server\n\
@@ -213,8 +226,6 @@ sed -i "/label install/ilabel autoinstall\n\
   append file=/cdrom/preseed/ubuntu-server.seed initrd=/install/initrd.gz auto=true priority=high preseed/file=/cdrom/preseed/netson.seed preseed/file/checksum=$seed_checksum --" $tmp/iso_new/isolinux/txt.cfg
 
 #This fucked me for a while. DONT OVERWRITE YOUR WORK
-#cp -rT $tmp/$seed_file $tmp/iso_new/preseed/$seed_file
-
 #After the initial configuration of hostnames and such, we then move onto the installation of dependencies
 
 #for now we'll use a local script to install the dependencies
@@ -225,7 +236,34 @@ chroot . "./after_chroot_todo.sh"
 # cleanup
 echo "Cleaning up"
 umount $tmp/iso_org
-rm -rf $tmp/iso_new
+rm -rf $tmp/iso_new/casper/filesystem.squashfs
+#umount -lf $tmp/iso_new/squashfs-root/dev
+#umount -lf $tmp/iso_new/squashfs-root/proc
+#umount -lf $tmp/iso_new/squashfs-root/sys
+#umount $tmp/ubuntu-18.04.3-desktop-amd64.iso
+
+
+#Fix the dpkg-query and tee issues
+chmod +w $tmp/iso_new/casper/filesystem.manifest
+chroot $tmp/iso_new/squashfs-root dpkg-query -W --showformat='${Package} ${Version}\n' | sudo tee $tmp/iso_new/casper/filesystem.manifest
+cp $tmp/iso_new/casper/filesystem.manifest $tmp/iso_new/casper/filesystem.manifest-desktop
+sed -i '/ubiquity/d' $tmp/iso_new/casper/filesystem.manifest-desktop
+sed -i '/casper/d' $tmp/iso_new/casper/filesystem.manifest-desktop
+
+mksquashfs $tmp/iso_new/squashfs-root $tmp/iso_new/casper/filesystem.squashfs -b 1048576
+
+#Fix this too
+printf $(sudo du -sx --block-size=1 $tmp/iso_new | cut -f1) > $tmp/iso_new/casper/filesystem.size
+rm -rf $tmp/iso_new/md5sum.txt
+cd $tmp/iso_new
+find -type f -print0 | sudo xargs -0 md5sum | grep -v $tmp/iso_new/isolinux/boot.cat > $tmp/iso_new/md5sum.txt
+
+#Helper from forum
+#mkisofs -r -V "Fedora Live" -cache-inodes -J -l -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -o Fedora-Live-14.iso mycd/
+#OLD #cd $tmp/iso_new && sudo genisoimage -loliet-long -D -r -V "$IMAGE_NAME" -cache-inodes -J -l -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -o ../jorgebuntu.iso .
+cd $tmp/iso_new && sudo genisoimage -joliet-long -D -r -V "Jorgebuntu" -cache-inodes -J -l -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -o ../jorgebuntu.iso .
+
+#rm -rf $tmp/iso_new
 rm -rf $tmp/iso_org
 rm -rf $tmphtml
 
