@@ -66,7 +66,7 @@ bion=$(fgrep Bionic $tmphtml | head -1 | awk '{print $3}' | sed 's/href=\"//; s/
 bion_vers=$(fgrep Bionic $tmphtml | head -1 | awk '{print $6}')
 
 download_file="ubuntu-$bion_vers-desktop-amd64.iso"
-download_location="http://releases.ubuntu.com/18.04.3/"
+download_location="http://releases.ubuntu.com/18.04.4/"
 
 #Might be changing this to something cooler, and not exactly the same as the fucking input file
 new_iso_name="ctf-ubuntu-$bion_vers-amd64-unattended.iso"
@@ -157,12 +157,12 @@ dpkg-divert --local --rename --add /sbin/initctl
 ln -s /bin/true /sbin/initctl
 export PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin
 apt update -y && apt upgrade -y && apt dist-upgrade -y
-apt remove -y thunderbird libreoffice
 apt install software-properties-common build-essential git -y
 apt update -y
-apt install python-pip  python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
+apt install python3-pip  python3-dev python3-mysqldb python3-mysqldb-dbg python3-pycurl zlib1g-dev memcached libmemcached-dev -y
 echo "ctf" | apt install mysql-server libmysqlclient-dev -y
-sudo service mysql enable
+apt remove -y thunderbird libreoffice
+
 sudo service mysql start
 sudo mysql -u root -p=rtb -e "create user 'rtb'@'localhost' identified by 'rtb'; create database rootthebox character set utf8mb4; grant all on rootthebox.* to 'rtb'@'localhost';"
 echo "" > ~/.mysql_history
